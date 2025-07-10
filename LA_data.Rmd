@@ -1,0 +1,268 @@
+---
+title: "LA_data"
+author: "Shahan"
+date: "2025-07-08"
+output:
+  pdf_document: default
+  word_document: default
+---
+```{r}
+library(tidyverse)
+library(naniar)
+library(lubridate)
+library(data.table)
+library(tidyverse)
+library(dplyr)
+library(tidyr)
+library(ggplot2)
+```
+```{r}
+df_raw <- read_csv("Crime_Data_from_2020_to_Present.csv")
+```
+```{r}
+glimpse(df_raw)
+skimr::skim(df_raw)
+```
+```{r}
+colMeans(is.na(df_raw)) * 100  
+```
+```{r}
+df_raw$Weapon_Desc <- NULL
+colnames(df_raw)
+df_raw$`Weapon Desc` <- NULL
+df_raw
+```
+#Removing  rows with >30 % missing values
+```{r}
+threshold <- 0.3
+df_raw <- df_raw[rowMeans(is.na(df_raw)) <= threshold, ]
+cat("Remaining rows:", nrow(df_raw), "\n")
+glimpse(df_raw)
+```
+```{r}
+#Median‐impute numeric columns
+num_cols <- names(df_raw)[sapply(df_raw, is.numeric)]
+for (col in num_cols) {
+  med <- median(df_raw[[col]], na.rm = TRUE)
+  df_raw[[col]][is.na(df_raw[[col]])] <- med
+}
+
+#“Unknown” for character/factor columns
+cat_cols <- names(df_raw)[sapply(df_raw, function(x) is.character(x) || is.factor(x))]
+for (col in cat_cols) {
+  df_raw[[col]][is.na(df_raw[[col]])] <- "Unknown"
+  #as a factor:
+  df_raw[[col]] <- as.factor(df_raw[[col]])
+}
+# Quick check
+cat("Total NAs remaining:", sum(is.na(df_raw)), "\n")
+```
+#Removing duplicates rows
+```{r}
+#Remove exact duplicate rows
+df_raw <- df_raw[!duplicated(df_raw), ]
+
+#Quick check
+cat("Rows after deduplication:", nrow(df_raw), "\n")
+
+
+#Normalize numeric columns (z-score)
+num_cols <- names(df_raw)[sapply(df_raw, is.numeric)]
+
+# Apply (x - mean)/sd to each numeric column
+for (col in num_cols) {
+  mu <- mean(df_raw[[col]], na.rm = TRUE)
+  sigma <- sd(df_raw[[col]], na.rm = TRUE)
+  # Avoid division by zero if constant column
+  if (sigma > 0) {
+    df_raw[[col]] <- (df_raw[[col]] - mu) / sigma
+  } else {
+    df_raw[[col]] <- 0
+  }
+}
+
+# Quick spot-check: should have mean ≈0 and sd ≈1
+summary(df_raw[num_cols])
+
+```
+
+#saving clean data:
+```{r}
+#write_csv(df_raw, "C:/Users/shaha/OneDrive/Desktop/Temp/LA_cleaned_data.csv")
+getwd()
+```
+
+--TEMP
+```{r}
+#read data
+#dataset <- read.csv("LA_cleaned_data.csv")
+#cut dataset for associates
+glimpse(dataset)
+
+#random sample
+set.seed(123)
+sample_size <- 50000
+
+#random sample from your full data frame `dataset`
+sample_dataset <- dataset[sample.int(nrow(dataset), sample_size), ]
+
+#check
+nrow(sample_dataset)  # should equal sample_size
+
+write.csv(sample_dataset, 
+          file = "sample_dataset.csv", 
+          row.names = FALSE)
+
+glimpse(sample_dataset)
+
+sample_dataset <- sample_dataset %>%
+ rename(
+ date             = DATE.OCC,
+ area_name        = AREA.NAME,	
+ type_of_crime    = Crm.Cd.Desc,		
+ victim_age       = Vict.Age,		
+ victim_sex       = Vict.Sex,		
+ victim_descent   = Vict.Descent,		
+ case_status      = Status.Desc,
+ crime_location   = LOCATION
+ )
+
+colnames(sample_dataset)
+
+#need to remove AREA, Premis.Cd, Premis.Desc,LOCATION for simple analysis
+#sample_dataset$Premis.Cd <- NULL
+#sample_dataset$Premis.Desc <- NULL
+
+
+#column name with its position
+col_info <- data.frame(
+  Index = seq_along(names(sample_dataset)),
+  Name  = names(sample_dataset),
+  stringsAsFactors = FALSE
+)
+print(col_info)
+
+write.csv(sample_dataset, 
+          file = "LA_crime_5K.csv", 
+          row.names = FALSE)
+```
+#Age_Group
+```{r}
+#age_group variable with four bins
+dataset <- read.csv("LA_crime_5K.csv")
+
+dataset <- dataset %>%
+  mutate(
+    age_group = cut(
+      victim_age, 
+      breaks = c(0, 18, 35, 60, Inf),
+      labels = c("0-18", "19-35", "36-60", "61+"),
+      right = TRUE,
+      include.lowest = TRUE
+    )
+  )
+
+#check
+#dataset$AREA <- NULL #removing AREA columns because its Los Angels Police Area distribution.
+
+colnames(dataset)
+str(dataset)
+table(dataset$age_group)
+```
+#Viz start from here:
+
+```{r}
+#Visualize the age_group distribution with a bar chart
+
+ggplot(dataset, aes(x = age_group)) +
+  geom_bar() +
+  labs(
+    title = "Crime Incidents by Age Group",
+    x     = "Age Group",
+    y     = "Count"
+  ) +
+  theme_minimal()
+```
+```{r}
+#Calculate and display percentage share per age_group
+age_summary <- dataset %>%
+  count(age_group, name = "count") %>%
+  mutate(
+    percentage = round(count / sum(count) * 100, 2)
+  )
+
+print(age_summary)
+```
+```{r}
+# Chunk 5: Bar chart of percentage share by age_group
+ggplot(age_summary, aes(x = age_group, y = percentage, fill = age_group)) +
+  geom_col() +
+  geom_text(aes(label = paste0(percentage, "%")), 
+            vjust = -0.5, size = 4) +
+  labs(
+    title = "Percentage of Crime Incidents by Age Group",
+    x     = "Age Group",
+    y     = "Percentage (%)"
+  ) +
+  theme_minimal() +
+  theme(legend.position = "none")
+
+```
+```{r}
+# Chunk 6: Cross-tabulation of age_group by AREA_NAME
+age_area_tab <- dataset %>%
+  count(location, age_group) %>%
+  pivot_wider(
+    names_from   = age_group,
+    values_from  = n,
+    values_fill  = list(n = 0)
+  )
+
+# View the cross-tabulation
+print(age_area_tab)
+
+```
+#normalizing:
+```{r}
+age_area_pct <- age_area_tab %>%
+  #compute row total of all age groups
+  mutate(total = rowSums(select(., -location))) %>%
+  #divide each age-group column by that row total
+  mutate(
+    `0-18` = (`0-18` / total)  * 100,
+    `19-35`= (`19-35`/ total)  * 100,
+    `36-60`= (`36-60`/ total)  * 100,
+    `61+`   = (`61+`   / total)  * 100
+  ) %>%
+  select(-total)
+
+print(age_area_pct)
+```
+```{r}
+#normalized table to long format for plotting
+age_area_pct_long <- age_area_pct %>%
+  pivot_longer(
+    cols = -location,
+    names_to = "age_group",
+    values_to = "percentage"
+  )
+
+#check
+head(age_area_pct_long)
+
+```
+```{r}
+#Stacked bar chart of age group percentages by location(Street_Name)
+
+ggplot(age_area_pct_long, aes(x = location, y = percentage, fill = age_group)) +
+  geom_col() +
+  labs(
+    title = "Age Group Distribution by location",
+    x     = "location",
+    y     = "Percentage of Incidents",
+    fill  = "Age Group"
+  ) +
+  coord_flip() +
+  theme_minimal()
+
+```

@@ -1,0 +1,258 @@
+---
+title: "La Crime Data Analysis"
+author: "Shahan Ahmed"
+date: "2025-05-27"
+output: word_document
+---
+
+#libraries
+
+```{r}
+library(tidyverse)
+library(dplyr)
+library(ggplot2)
+library(lubridate)
+library(tsibble)
+library(fable)
+library(feasts)
+library(urca)
+library(naniar)
+library(skimr)
+library(VIM)
+library(mice)
+library(caret)
+```
+
+#To read dataset
+
+```{r}
+data <-read.csv("Crime_Data_from_2020_to_Present.csv", , stringsAsFactors = FALSE)
+```
+
+```{r}
+# overall summary
+skim(data)
+
+
+# percent missing per column
+colMeans(is.na(data)) * 100
+
+# visualize patterns
+vis_miss(data)            # from naniar
+aggr(data, prop = FALSE)  # from VIM
+
+```
+
+```{r}
+data1 <- data %>%
+  mutate(across(where(is.numeric),
+                ~ if_else(is.na(.), median(., na.rm = TRUE), .))) %>%
+  mutate(across(where(is.factor),
+                ~ fct_explicit_na(., na_level = "Missing")))
+```
+
+```{r}
+# mice: chained equations
+imp <- mice(data1, m = 5, method = "pmm", seed = 123)
+df_imp <- complete(imp)
+
+# caret: kNN
+pre_knn <- preProcess(data1, method = "knnImpute")
+df_imp2 <- predict(pre_knn, data1)
+```
+
+```{r}
+df_scaled <- df_imp %>%
+  mutate(across(where(is.numeric),
+                ~ scale(.) %>% as.numeric()))
+
+# Or use caret preProcess
+pre_norm <- preProcess(df_imp, method = c("center", "scale"))
+df_scaled2 <- predict(pre_norm, df_imp)
+```
+
+#Quick Visualization
+
+```{r}
+# check no more NAs
+sum(is.na(df_scaled))  
+
+# sample boxplots pre- and post-scaling
+par(mfrow = c(1,2))
+boxplot(df_imp$Vict.Age, main = "Before scaling")
+boxplot(df_scaled$Vict.Age, main = "After z-score")
+
+# ggplot2 density plots
+library(ggplot2)
+ggplot(df_scaled, aes(x = Vict.Age)) + 
+  geom_density() + 
+  ggtitle("Normalized distribution")
+
+```
+
+#To view and inspect dataset
+
+```{r}
+
+head(data[["DATE.OCC"]], 10)
+data$DATE.OCC <- mdy(data$DATE.OCC)
+view(data)
+
+str(data1)
+
+```
+
+```{r}
+skim(data)
+
+# percent missing per column
+colMeans(is.na(df)) * 100
+
+# visualize patterns
+vis_miss(df)            # from naniar
+aggr(df, prop = FALSE)  # from VIM
+```
+
+```{r}
+
+```
+
+```{r}
+#convert blank strings to NA for removing NA as well as blanks
+data[data == ""] <- NA    
+data[data == " "] <- NA 
+
+view(data)
+
+#then omit NA values
+data <- na.omit(data)
+view(data)
+
+#After omitting NA value total= 326,970
+```
+
+```{r}
+print(data)
+```
+
+#Cleaning ends here.
+
+#Analysis starts here: #description analysis using cleaned data
+
+```{r}
+table(data$AREA.NAME)
+table(data$Vict.Age)
+table(data$Status.Desc)
+```
+
+#visualization
+
+```{r}
+udoy <- data
+
+top_crimes <- udoy %>%
+  count(Crm.Cd.Desc, sort = TRUE) %>%
+  top_n(15)
+
+ggplot(top_crimes, aes(x = reorder(Crm.Cd.Desc, n), y = n)) +
+  geom_bar(stat = "identity", fill = "#2c7fb8", width = 0.7) +
+  coord_flip() +
+  geom_text(aes(label = n), hjust = -0.1, color = "black", size = 3.5) +
+  scale_y_continuous(labels = scales::comma) +  # 🔥 fix here
+  labs(
+    title = "Top 10 Most Common Crimes in Los Angeles",
+    subtitle = "Based on reported incidents",
+    x = "Crime Type",
+    y = "Number of Reports"
+  ) +
+  theme_minimal(base_size = 13) +
+  theme(
+    plot.title = element_text(face = "bold", size = 16, hjust = 0.5),
+    plot.subtitle = element_text(size = 12, hjust = 0.5),
+    axis.text.y = element_text(face = "bold"),
+    axis.title.x = element_text(margin = margin(t = 10)),
+    panel.grid.major.y = element_blank()
+  ) +
+  expand_limits(y = max(top_crimes$n) * 1.1)
+
+```
+
+#crime trends over time time-montly line plot
+
+```{r}
+monthly_crimes <- data %>%
+  count(DATE.OCC)
+
+ggplot(monthly_crimes, aes(x = as.Date(paste0(DATE.OCC, "-01")), y = n)) +
+  geom_line(color = "firebrick", size = 1) +
+  labs(title = "Monthly Crime Trend", x = "Month", y = "Crime Count") +
+  theme_minimal()
+```
+
+#top crime barplot
+
+```{r}
+area_sex_crimes <- data %>%
+  group_by(AREA.NAME, Vict.Sex) %>%
+  summarise(count = n(), .groups = 'drop') %>%
+  top_n(10, count)
+
+ggplot(area_sex_crimes, aes(x = reorder(AREA.NAME, -count), y = count, fill = Vict.Sex)) +
+  geom_bar(stat = "identity", position = "dodge") +
+  labs(title = "Crimes by Area and Victim Sex", x = "Area", y = "Count") +
+  theme_minimal() +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))
+```
+
+#time series forcasting model
+
+```{r}
+data$Month <- floor_date(data$DATE.OCC, "month")
+
+monthly_crimes <- data %>%
+  count(Month) %>%
+  arrange(Month)
+
+monthly_ts <- monthly_crimes %>%
+  rename(date = Month, value = n) %>%
+  as_tsibble(index = date)
+
+monthly_ts <- monthly_ts %>%
+  tsibble::fill_gaps()
+
+monthly_ts <- monthly_ts %>%
+  mutate(value = if_else(is.na(value), 0, value))
+
+```
+
+#ARIMA Model
+
+```{r}
+model <- monthly_ts %>%
+  model(ARIMA = ARIMA(value))
+
+#View the model output:
+forecasted %>% as_tibble()
+```
+
+#To view the output
+
+```{r}
+forecasted <- model %>%
+  forecast(h = "6 months")
+
+# Plot forecast along with historical data
+autoplot(forecasted, monthly_ts) +
+  labs(
+    title = "Monthly Crime Forecast (ARIMA Model)",
+    x = "Month",
+    y = "Crime Count"
+  ) +
+  theme_minimal()
+```
+
+```{r}
+forecasted %>% as_tibble().Last.value
+glance(model)
+
+```

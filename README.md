@@ -20,7 +20,7 @@ install.packages(c(
 Usage
 1.	Clone this repository:
  	
-git clone https://github.com/yourusername/LA-crime-analysis.git cd LA-crime-analysis
+git clone https: https://github.com/shahan24h/ladp-crime-data-analysis.git cd LA-crime-analysis
 2. **Place** the raw data file `Crime_Data_from_2020_to_Present.csv` in the `data/` folder.
 3. **Run** the cleaning script:
    ```r
